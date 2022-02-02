@@ -1,0 +1,247 @@
+Question 1:
+
+Assumptions: 
+- A session lasting more than 1 hour will be counted in two hours, since that session is still active, and would be unique to that 
+  hour. Same goes for unique visitors, they are counted once per hour in which they had events. 
+- The count of unique events includes page views, since we are equating hits = events in the problem set description until question 2.
+
+Query:
+
+SELECT
+  COUNT(DISTINCT CONCAT(fullVisitorID, ',',visitId)) AS number_of_unique_sessions,
+  COUNT(DISTINCT fullVisitorID) AS number_of_unique_users,
+  COUNT(1) AS number_of_unique_events,
+  hour
+FROM
+  `bigquery-public-data.google_analytics_sample.ga_sessions_20170801`,
+  UNNEST(hits) AS hits
+GROUP BY
+  hour
+ORDER BY
+  hour;
+
+Results:
+
+number_of_unique_sessions	number_of_unique_users	number_of_unique_events	hour
+96				90			391			0
+72				72			229			1
+73				73			187			2
+68				66			174			3
+73				73			176			4
+102				101			341			5
+123				122			397			6
+144				142			588			7
+136				130			807			8
+127				123			751			9
+152				150			926			10
+153				151			745			11
+139				136			822			12
+161				153			778			13
+141				140			1129			14
+128				125			840			15
+104				103			596			16
+92				91			428			17
+106				103			556			18
+88				86			499			19
+106				102			451			20
+84				81			580			21
+99				98			503			22
+94				92			339			23
+
+Question 2:
+
+Assumptions:
+- By 'Promotion Click' I am assuming you are referring to 'Onsite Click', since "select distinct(hits.eventInfo.eventAction)" 
+  does not return 'Promotion Click' at all in the entire dataset accross all tables. 'Onsite Click' also seems like an important user-action to track.
+  Going with my gut here that this is a mistake in the requirements. The only part of the dataset indicating promo clicks is promotionActionInfo.promoIsClick,
+  which will already be counted since its attached to user actions. 
+
+- also assuming that there is a ${escCatTitle} product category and that I do not need to trim the directory path strings down to the leaf.
+
+Query:
+
+SELECT
+  COUNT(DISTINCT fullVisitorId) AS number_of_unique_users_with_actions,
+  v2ProductCategory
+FROM
+  `bigquery-public-data.google_analytics_sample.ga_sessions_20170801`,
+  UNNEST(hits) AS hits,
+  UNNEST(hits.product) AS product
+WHERE
+  hits.type != 'PAGE'
+  AND hits.eventInfo.eventAction IN ('Onsite Click',
+    'Product Click',
+    'Quickview Click')
+GROUP BY
+  v2ProductCategory
+ORDER BY
+  number_of_unique_users_with_actions DESC;
+
+Results:
+
+number_of_unique_users_with_actions	v2ProductCategory
+81					Home/Shop by Brand/YouTube/
+46					Home/Apparel/Men's/Men's-T-Shirts/
+40					Home/Bags/
+34					Home/Bags/Backpacks/
+29					Home/Office/Notebooks & Journals/
+25					Home/Apparel/Men's/Men's-Outerwear/
+25					Home/Accessories/Stickers/
+23					${escCatTitle}
+22					Home/Accessories/Fun/
+21					Home/Drinkware/
+21					Home/Drinkware/Water Bottles and Tumblers/
+21					Home/Electronics/
+19					Home/Apparel/Women's/Women's-T-Shirts/
+15					Home/Office/Writing Instruments/
+14					Home/Apparel/Men's/
+13					Home/Electronics/Audio/
+13					Home/Apparel/Headgear/
+11					Home/Bags/Shopping and Totes/
+10					Home/Shop by Brand/Android/
+10					Home/Office/
+9					Home/Apparel/Kid's/Kids-Youth/
+8					Home/Shop by Brand/Google/
+8					Home/Apparel/Men's/Men's-Performance Wear/
+8					Home/Apparel/Women's/Women's-Outerwear/
+8					Home/Bags/More Bags/
+8					Home/Accessories/
+7					Home/Apparel/Kid's/Kid's-Toddler/
+7					Home/Accessories/Housewares/
+7					Home/Apparel/Women's/Women's-Performance Wear/
+6					Home/Drinkware/Mugs and Cups/
+6					Home/Office/Office Other/
+6					Home/Apparel/Kid's/Kid's-Infant/
+5					Home/Clearance Sale/
+5					Home/Apparel/
+5					Home/Electronics/Flashlights/
+4					Home/Gift Cards/
+4					Home/Apparel/Kid's/
+3					Home/Electronics/Power/
+3					Home/Electronics/Electronics Accessories/
+2					Home/Accessories/Pet/
+1					Home/Shop by Brand/
+
+Question 3:
+
+Assumptions:
+
+- There is one unique row per session (I verified that with a group by statement around visitId and fullVisitorId)
+- We only want the breakdown for sessions with Add to Cart actions. Those without are not included in the breakdown below.
+
+Query:
+
+SELECT
+  COUNTIF(totals.transactions > 0) AS number_of_sessions_with_purchases,
+  COUNTIF(totals.transactions IS NULL) AS number_of_abandoned_carts
+FROM
+  `bigquery-public-data.google_analytics_sample.ga_sessions_20170801`
+WHERE
+  'Add to Cart' IN UNNEST(hits.eventInfo.eventAction);
+
+Results:
+
+number_of_sessions_with_purchases	number_of_abandoned_carts
+34					142
+
+Question 4:
+
+Assumptions:
+
+-- the hits.hour field represents the hour in which the hit occured in the customer's timezone.
+-- promoIsClick means that a promotion was clicked (ad/link with a discount/deal)
+
+Query:
+
+SELECT
+  -- IN returns null instead of False since totals.transactions contains null values
+  ('Remove from Cart' IN UNNEST(hits.eventInfo.eventAction)) IS NOT NULL AS has_remove_from_cart,
+  (totals.transactions > 0) IS NOT NULL AS is_purchase,
+  geoNetwork.continent,
+  totals.newVisits IS NOT NULL AS is_new_visit,
+  device.isMobile,
+  (
+  SELECT
+    hour
+  FROM
+    UNNEST(hits)
+  WHERE
+    eventInfo.eventAction = 'Add to Cart'
+  ORDER BY
+    hitNumber DESC
+  LIMIT
+    1) AS last_add_to_cart_hour,
+  totals.hits -
+IF
+  (totals.pageviews IS NOT NULL,
+    totals.pageviews,
+    0) AS number_of_user_actions,
+IF
+  (totals.pageviews IS NOT NULL,
+    totals.pageviews,
+    0) AS number_of_page_views,
+IF
+  (totals.timeOnSite IS NOT NULL,
+    totals.timeOnSite,
+    0) AS time_on_site,
+  (TRUE IN UNNEST(hits.promotionActionInfo.promoIsClick)) IS NOT NULL AS has_promo,
+  (
+  SELECT
+    MIN(time)/1000
+  FROM
+    UNNEST(hits)
+  WHERE
+    eventInfo.eventAction = 'Add to Cart') AS first_add_to_cart_delay,
+  (
+  SELECT
+    COUNT(*)
+  FROM
+    UNNEST(hits)
+  WHERE
+    eventInfo.eventAction = 'Add to Cart') AS add_to_cart_count,
+  (
+  SELECT
+    COUNT(*)
+  FROM
+    UNNEST(hits)
+  WHERE
+    eventInfo.eventAction = 'Quickview Click'
+    AND type='EVENT') AS quick_click_count,
+  (
+  SELECT
+    COUNT(*)
+  FROM
+    UNNEST(hits)
+  WHERE
+    eventInfo.eventAction = 'Onsite Click'
+    AND type='EVENT') AS onsite_click_count,
+  (
+  SELECT
+    COUNT(*)
+  FROM
+    UNNEST(hits)
+  WHERE
+    eventInfo.eventAction = 'Product Click'
+    AND type='EVENT') AS product_click_count,
+FROM
+  `bigquery-public-data.google_analytics_sample.ga_sessions_*`
+WHERE
+  'Add to Cart' IN UNNEST(hits.eventInfo.eventAction);
+
+--this query could've be done cleaner with cross joins and group bys
+
+Reasoning:
+
+has_remove_from_cart: might show that a user is more serious about buying an item, since that would mean they are looking at the price (you do not need to remove your items
+                      from the cart if you are not planning to make a purchase.
+is_purchase: The target class.
+continent: Chose this categorical variable because the dataset might be too small to have 150~ country categories one-hot-encoded (occam's razor). There might be a correlation between continent
+           and purchase, as the average income is different in each part of the world.
+is_new_visit: The fact that someone is visiting the website for the first time might be negatively correlated to making a purchase.
+isMobile: I am reasoning that the purchase experience on a phone versus a desktop would impact the chances of making a purchase (I get frustrated on my phone trying to type my credit card in)
+last_add_to_cart_hour: From the first question, I saw some patterns where people were more active during daytime. Im hoping this would translate well to predicting purchases.
+number_of_user_actions: More activity in a session should be positevely correlated to the probability of a purchase.
+has_promo: If a user clicked on a promo, the deal should usually entice them to purchase more often than not.
+first_add_to_cart_delay: how long it takes before an add to cart action is made might say something about the "conviction" to make a purchase of the user
+add_to_cart_count, quick_click_count, onsite_click_count, product_click_count :just throwing stuff at the wall and seeing if it sticks or not, but any user action should in theory indicate something
+                                                                               about the willingess of purchase.
